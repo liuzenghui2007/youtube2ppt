@@ -9,6 +9,7 @@ CONFIG_FILENAME = "config.json"
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "url": "",
+    "video_dir": "./video_output",
     "output_dir": "./ppt_output",
     "cookies_from_browser": "",
     "cookies_file": "",
@@ -50,6 +51,9 @@ def load_config(project_root: Path | None = None) -> dict[str, Any]:
     for k, v in data.items():
         if k in out:
             out[k] = v
+    # 旧 config 无 video_dir 时与 output_dir 一致，避免找不到已下载视频
+    if "video_dir" not in data and "output_dir" in data:
+        out["video_dir"] = out["output_dir"]
     return out
 
 

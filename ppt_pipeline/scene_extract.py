@@ -46,6 +46,7 @@ def run_extract_scenedetect(
             progress_callback(msg)
 
     output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     video_for_detect = video_cropped if video_cropped and video_cropped.is_file() else video_full
     start_sec = _hms_to_seconds(start_time) if start_time else None
     end_sec = _hms_to_seconds(end_time) if end_time else None
@@ -89,9 +90,15 @@ def run_extract_scenedetect(
     frames_dir = output_dir / "frames_scenedetect"
     frames_dir.mkdir(parents=True, exist_ok=True)
 
+    def _frame_progress(current: int, total: int) -> None:
+        if total > 0 and progress_callback:
+            progress_callback("PROGRESS: " + str(round(100 * current / total)))
+
     if output_ppt_only:
         _log("正在抽取 PPT 区域帧…")
-        paths = evp_utils.extract_frames_at_times(video_for_detect, times_sec, frames_dir)
+        paths = evp_utils.extract_frames_at_times(
+            video_for_detect, times_sec, frames_dir, progress_callback=_frame_progress
+        )
         if not paths:
             raise RuntimeError("场景关键帧抽取失败")
         out_ppt = output_dir / "slides_ppt_only.pdf"
@@ -108,7 +115,9 @@ def run_extract_scenedetect(
         _log("正在抽取全屏帧…")
         full_dir = output_dir / "frames_full"
         full_dir.mkdir(parents=True, exist_ok=True)
-        paths_full = evp_utils.extract_frames_at_times(video_full, times_sec, full_dir)
+        paths_full = evp_utils.extract_frames_at_times(
+            video_full, times_sec, full_dir, progress_callback=_frame_progress
+        )
         if paths_full:
             out_full = output_dir / "slides_full.pdf"
             evp_utils.frames_to_pdf(paths_full, out_full)

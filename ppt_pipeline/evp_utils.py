@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 
 EVP_TMP_DIR = ".extract-video-ppt-tmp-data"
@@ -31,10 +32,13 @@ def extract_frames_at_times(
     video_path: Path,
     times_sec: list[float],
     output_dir: Path,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> list[Path]:
-    """在给定时间点从视频抽帧，保存为 frame_001.png 等，返回路径列表。"""
+    """在给定时间点从视频抽帧，保存为 frame_001.png 等，返回路径列表。progress_callback(current_1based, total)。"""
     output_dir = Path(output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    total = len(times_sec)
     paths = []
     for i, t in enumerate(times_sec):
         out = output_dir / f"frame_{i + 1:03d}.png"
@@ -44,6 +48,8 @@ def extract_frames_at_times(
         )
         if r.returncode == 0 and out.is_file():
             paths.append(out)
+        if progress_callback and total > 0:
+            progress_callback(i + 1, total)
     return paths
 
 

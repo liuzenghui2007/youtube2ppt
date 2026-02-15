@@ -62,6 +62,7 @@ def run_extract(
         )
 
     output_dir = Path(output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     video_for_evp = video_cropped if video_cropped and video_cropped.is_file() else video_full
     env = os.environ.copy()
     env.setdefault("OPENCV_FFMPEG_READ_ATTEMPTS", "16384")

@@ -15,6 +15,7 @@ eggs/
 *.egg
 
 # 项目输出与临时文件
+video_output/
 ppt_output/
 *.mp4
 *.pdf

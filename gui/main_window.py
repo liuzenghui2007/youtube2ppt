@@ -1,6 +1,7 @@
 """主窗口：左侧表单（URL、裁剪、参数、三按钮）+ 右侧视频预览（时间轴 + 裁剪框）。"""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QSplitter,
     QSizePolicy,
+    QProgressBar,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QByteArray
 from PySide6.QtGui import QImage, QPixmap, QPainter, QColor, QPen
@@ -35,7 +37,6 @@ from ppt_pipeline import (
     save_config,
     run_download,
     run_crop,
-    run_preview_frames,
     parse_crop,
     run_extract,
     get_video_duration_sec,
@@ -146,10 +147,11 @@ class ExtractWorker(QThread):
     def run(self):
         try:
             from ppt_pipeline import run_crop
-            v_crop = self.output_dir / "video_cropped.mp4"
+            video_dir = self.video_full.parent
+            v_crop = video_dir / "video_cropped.mp4"
             if not v_crop.is_file():
                 self.progress.emit("正在裁剪视频…")
-                run_crop(self.video_full, self.output_dir, self.crop, force=False)
+                run_crop(self.video_full, video_dir, self.crop, force=False)
             if self.extract_method == "scenedetect":
                 self.progress.emit("正在运行 PySceneDetect 场景检测…")
             else:
@@ -250,15 +252,27 @@ class MainWindow(QMainWindow):
         self.check_ejs_github.setChecked(bool(self._cfg.get("ytdlp_remote_components") == "ejs:github"))
         form.addRow("", self.check_ejs_github)
 
+        video_dir_row = QHBoxLayout()
+        self.video_dir_edit = QLineEdit()
+        self.video_dir_edit.setText(self._cfg.get("video_dir", "./video_output"))
+        self.video_dir_edit.setPlaceholderText("视频与裁剪结果存放目录")
+        self.video_dir_edit.editingFinished.connect(self._refresh_video_source)
+        video_dir_row.addWidget(self.video_dir_edit)
+        video_browse_btn = QPushButton("选择…")
+        video_browse_btn.clicked.connect(self._browse_video_dir)
+        video_dir_row.addWidget(video_browse_btn)
+        form.addRow("视频目录:", video_dir_row)
+
         out_row = QHBoxLayout()
         self.output_edit = QLineEdit()
         self.output_edit.setText(self._cfg.get("output_dir", "./ppt_output"))
+        self.output_edit.setPlaceholderText("PDF、图片等输出目录")
         self.output_edit.editingFinished.connect(self._refresh_video_source)
         out_row.addWidget(self.output_edit)
         browse_btn = QPushButton("选择…")
         browse_btn.clicked.connect(self._browse_output)
         out_row.addWidget(browse_btn)
-        form.addRow("输出目录:", out_row)
+        form.addRow("PPT/输出目录:", out_row)
 
         crop_row = QHBoxLayout()
         self.crop_left = QLineEdit()
@@ -355,10 +369,6 @@ class MainWindow(QMainWindow):
         self.btn_download.clicked.connect(self._on_download)
         btn_layout.addWidget(self.btn_download)
 
-        self.btn_preview = QPushButton("预览")
-        self.btn_preview.clicked.connect(self._on_preview)
-        btn_layout.addWidget(self.btn_preview)
-
         self.btn_extract = QPushButton("提取")
         self.btn_extract.clicked.connect(self._on_extract)
         btn_layout.addWidget(self.btn_extract)
@@ -409,11 +419,17 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(video_widget)
 
-        # 下载进度（下方，默认较小，可拖动分割条调整）
+        # 下载/提取进度（下方，默认较小，可拖动分割条调整）
         log_widget = QWidget()
         log_layout = QVBoxLayout(log_widget)
         log_layout.setContentsMargins(0, 4, 0, 0)
-        log_layout.addWidget(QLabel("下载进度:"))
+        log_layout.addWidget(QLabel("进度:"))
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setFormat("%p%")
+        log_layout.addWidget(self.progress_bar)
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMinimumHeight(56)
@@ -430,8 +446,14 @@ class MainWindow(QMainWindow):
         self._output_dir = None
         self._refresh_video_source()
 
+    def _browse_video_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择视频目录", self.video_dir_edit.text())
+        if d:
+            self.video_dir_edit.setText(d)
+            self._refresh_video_source()
+
     def _browse_output(self):
-        d = QFileDialog.getExistingDirectory(self, "选择输出目录", self.output_edit.text())
+        d = QFileDialog.getExistingDirectory(self, "选择 PPT/输出目录", self.output_edit.text())
         if d:
             self.output_edit.setText(d)
             self._refresh_video_source()
@@ -442,6 +464,13 @@ class MainWindow(QMainWindow):
         )
         if path:
             self.cookies_file_edit.setText(path)
+
+    def _get_video_dir(self) -> Path:
+        raw = (self.video_dir_edit.text() or "").strip() or "./video_output"
+        p = Path(raw)
+        if not p.is_absolute():
+            p = self._project_root / p
+        return p.resolve()
 
     def _get_output_dir(self) -> Path:
         raw = (self.output_edit.text() or "").strip() or "./ppt_output"
@@ -461,8 +490,8 @@ class MainWindow(QMainWindow):
             return (0.35, 0, 0.65, 1)
 
     def _refresh_video_source(self):
-        out = self._get_output_dir()
-        video = out / "video.mp4"
+        video_dir = self._get_video_dir()
+        video = video_dir / "video.mp4"
         if video.is_file():
             self._video_path = video
             try:
@@ -479,7 +508,7 @@ class MainWindow(QMainWindow):
             self.time_slider.setEnabled(False)
             self.preview_label.setText(
                 "请先下载视频\n下载后可在右侧拖动时间轴查看裁剪效果\n\n"
-                f"当前查找: {video}"
+                f"视频目录: {video_dir}\n查找: {video}"
             )
             self.time_label.setText("0:00 / 0:00")
 
@@ -511,6 +540,7 @@ class MainWindow(QMainWindow):
     def _write_config_to_disk(self, *, show_message: bool = False):
         """把当前表单写入 config.json。"""
         self._cfg["url"] = self.url_edit.text().strip()
+        self._cfg["video_dir"] = self.video_dir_edit.text().strip() or "./video_output"
         self._cfg["output_dir"] = self.output_edit.text().strip() or "./ppt_output"
         self._cfg["cookies_from_browser"] = (self.cookies_combo.currentData() or "").strip()
         self._cfg["cookies_file"] = self.cookies_file_edit.text().strip()
@@ -542,13 +572,22 @@ class MainWindow(QMainWindow):
         self._write_config_to_disk(show_message=True)
 
     def closeEvent(self, event):
-        """关闭窗口时自动保存左侧设置，下次启动自动恢复。"""
+        """关闭窗口时自动保存设置；若有任务在跑则先停止再退出。"""
+        if self._worker is not None and self._worker.isRunning():
+            try:
+                self._worker.finished.disconnect()
+            except Exception:
+                pass
+            self._worker.requestInterruption()
+            if not self._worker.wait(2000):
+                self._worker.terminate()
+                self._worker.wait(3000)
+            self._worker = None
         self._write_config_to_disk(show_message=False)
         super().closeEvent(event)
 
     def _set_buttons_enabled(self, en: bool):
         self.btn_download.setEnabled(en)
-        self.btn_preview.setEnabled(en)
         self.btn_extract.setEnabled(en)
 
     def _on_download(self):
@@ -556,12 +595,13 @@ class MainWindow(QMainWindow):
         if not url:
             QMessageBox.warning(self, "提示", "请填写 URL")
             return
-        out = self._get_output_dir()
+        video_dir = self._get_video_dir()
         self._set_buttons_enabled(False)
         self.log_text.clear()
+        self.progress_bar.setValue(0)
         self.log_text.appendPlainText("开始下载…\n")
         self._worker = DownloadWorker(
-            url, out,
+            url, video_dir,
             force=self._cfg.get("force_download"),
             project_root=self._project_root,
             cookies_from_browser=self.cookies_combo.currentData() or "",
@@ -574,34 +614,36 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _append_download_log(self, line: str):
+        # 提取进度：PROGRESS: N 或 evp 的 process: N%
+        if line.strip().startswith("PROGRESS:"):
+            try:
+                pct = int(line.split(":", 1)[1].strip())
+                self.progress_bar.setValue(min(100, max(0, pct)))
+            except (ValueError, IndexError):
+                pass
+            return
+        m = re.search(r"process:\s*(\d+)\s*%", line, re.IGNORECASE)
+        if m:
+            try:
+                self.progress_bar.setValue(min(100, max(0, int(m.group(1)))))
+            except ValueError:
+                pass
         self.log_text.appendPlainText(line)
         self.log_text.verticalScrollBar().setValue(self.log_text.verticalScrollBar().maximum())
 
-    def _on_preview(self):
-        out = self._get_output_dir()
-        video = out / "video.mp4"
-        if not video.is_file():
-            QMessageBox.warning(self, "提示", "请先下载视频")
-            return
-        try:
-            crop = self._get_crop()
-        except ValueError as e:
-            QMessageBox.warning(self, "提示", str(e))
-            return
-        self._set_buttons_enabled(False)
-        def do():
-            run_crop(video, out, crop, force=self._cfg.get("force_crop"))
-            run_preview_frames(video, out, crop)
-        self._worker = Worker(do)
-        self._worker.finished.connect(self._on_worker_finished)
-        self._worker.start()
-
     def _on_extract(self):
-        out = self._get_output_dir()
-        video_full = out / "video.mp4"
-        video_cropped = out / "video_cropped.mp4"
+        video_dir = self._get_video_dir()
+        output_dir = self._get_output_dir()
+        try:
+            video_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            QMessageBox.warning(self, "提示", f"无法创建输出目录：{e}")
+            return
+        video_full = video_dir / "video.mp4"
+        video_cropped = video_dir / "video_cropped.mp4"
         if not video_full.is_file():
-            QMessageBox.warning(self, "提示", "请先下载视频")
+            QMessageBox.warning(self, "提示", "请先下载视频（视频目录下应有 video.mp4）")
             return
         try:
             get_video_duration_sec(video_full)
@@ -610,7 +652,7 @@ class MainWindow(QMainWindow):
                 self,
                 "视频文件无效",
                 "当前 video.mp4 可能不完整或已损坏（例如下载曾中断）。\n\n"
-                "请删除输出目录下的 video.mp4，然后重新点击「下载」再试。",
+                "请删除视频目录下的 video.mp4，然后重新点击「下载」再试。",
             )
             return
         try:
@@ -622,9 +664,10 @@ class MainWindow(QMainWindow):
             return
         self._set_buttons_enabled(False)
         self.log_text.clear()
+        self.progress_bar.setValue(0)
         self.log_text.appendPlainText("开始提取（evp 检测翻页 + 生成 PDF）…\n")
         self._worker = ExtractWorker(
-            out,
+            output_dir,
             video_full,
             video_cropped if video_cropped.is_file() else None,
             crop,
@@ -644,6 +687,7 @@ class MainWindow(QMainWindow):
 
     def _on_worker_finished(self, ok: bool, err: str):
         self._set_buttons_enabled(True)
+        self.progress_bar.setValue(100 if ok else 0)
         if ok:
             if self.log_text.toPlainText().strip():
                 self.log_text.appendPlainText("\n完成。")

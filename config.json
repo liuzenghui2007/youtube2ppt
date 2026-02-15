@@ -1,5 +1,6 @@
 {
   "url": "https://www.youtube.com/watch?v=OYqlwfqGqOE&list=PLxpxXZj-IgXxEVRRZso4kmUhmxRqtVKe0&index=5",
+  "video_dir": "./video_output",
   "output_dir": "./ppt_output",
   "cookies_from_browser": "chrome",
   "cookies_file": "C:/Users/24016/Downloads/cookies.txt",
@@ -11,8 +12,8 @@
   "crop_height": 1.0,
   "similarity": 0.9,
   "extract_method": "scenedetect",
-  "scene_threshold": 15.0,
-  "start_time": "",
+  "scene_threshold": 6.0,
+  "start_time": "00:01:00",
   "end_time": "",
   "output_ppt_only": true,
   "output_full_screen": false,
