@@ -36,7 +36,15 @@ def main() -> None:
         if not url:
             print("请提供 -u/--url 或在 config 中设置 url", file=sys.stderr)
             sys.exit(1)
-        run_download(url, output_dir, force=cfg.get("force_download"), project_root=project_root)
+        run_download(
+            url, output_dir,
+            force=cfg.get("force_download"),
+            project_root=project_root,
+            cookies_from_browser=cfg.get("cookies_from_browser") or None,
+            cookies_file=cfg.get("cookies_file") or None,
+            js_runtime=cfg.get("ytdlp_js_runtime") or None,
+            remote_components=cfg.get("ytdlp_remote_components") or None,
+        )
         print("下载完成:", output_dir / "video.mp4")
 
     crop = None

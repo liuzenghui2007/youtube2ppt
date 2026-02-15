@@ -10,6 +10,10 @@ CONFIG_FILENAME = "config.json"
 DEFAULT_CONFIG: dict[str, Any] = {
     "url": "",
     "output_dir": "./ppt_output",
+    "cookies_from_browser": "",
+    "cookies_file": "",
+    "ytdlp_js_runtime": "",
+    "ytdlp_remote_components": "",
     "crop_left": 0.35,
     "crop_top": 0.0,
     "crop_width": 0.65,

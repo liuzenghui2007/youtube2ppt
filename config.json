@@ -1,6 +1,10 @@
 {
   "url": "https://www.youtube.com/watch?v=OYqlwfqGqOE&list=PLxpxXZj-IgXxEVRRZso4kmUhmxRqtVKe0&index=5",
   "output_dir": "./ppt_output",
+  "cookies_from_browser": "chrome",
+  "cookies_file": "C:/Users/24016/Downloads/cookies.txt",
+  "ytdlp_js_runtime": "node",
+  "ytdlp_remote_components": "ejs:github",
   "crop_left": 0.265,
   "crop_top": 0.0,
   "crop_width": 0.735,

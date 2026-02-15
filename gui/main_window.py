@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSlider,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QMessageBox,
     QGroupBox,
@@ -64,12 +65,26 @@ class DownloadWorker(QThread):
     finished = Signal(bool, str)
     progress = Signal(str)
 
-    def __init__(self, url: str, output_dir: Path, force: bool, project_root: Path):
+    def __init__(
+        self,
+        url: str,
+        output_dir: Path,
+        force: bool,
+        project_root: Path,
+        cookies_from_browser: str = "",
+        cookies_file: str = "",
+        js_runtime: str = "",
+        remote_components: str = "",
+    ):
         super().__init__()
         self.url = url
         self.output_dir = output_dir
         self.force = force
         self.project_root = project_root
+        self.cookies_from_browser = (cookies_from_browser or "").strip()
+        self.cookies_file = (cookies_file or "").strip()
+        self.js_runtime = (js_runtime or "").strip()
+        self.remote_components = (remote_components or "").strip()
 
     def run(self):
         try:
@@ -78,6 +93,10 @@ class DownloadWorker(QThread):
                 self.output_dir,
                 force=self.force,
                 project_root=self.project_root,
+                cookies_from_browser=self.cookies_from_browser or None,
+                cookies_file=self.cookies_file or None,
+                js_runtime=self.js_runtime or None,
+                remote_components=self.remote_components or None,
                 progress_callback=lambda line: self.progress.emit(line),
             )
             self.finished.emit(True, "")
@@ -172,6 +191,52 @@ class MainWindow(QMainWindow):
         self.url_edit.setPlaceholderText("https://www.youtube.com/watch?v=...")
         self.url_edit.setText(self._cfg.get("url", ""))
         form.addRow("URL:", self.url_edit)
+
+        self.cookies_combo = QComboBox()
+        self.cookies_combo.setToolTip(
+            "遇「Sign in to confirm you're not a bot」时使用。Chrome 需先完全关闭再选，否则会报「Could not copy Chrome cookie database」；或改用下方 Cookie 文件。"
+        )
+        for label, value in [
+            ("不使用", ""),
+            ("Chrome", "chrome"),
+            ("Edge", "edge"),
+            ("Firefox", "firefox"),
+            ("Opera", "opera"),
+            ("Safari", "safari"),
+            ("Chromium", "chromium"),
+        ]:
+            self.cookies_combo.addItem(label, value)
+        _cookies_saved = (self._cfg.get("cookies_from_browser") or "").strip().lower()
+        idx = self.cookies_combo.findData(_cookies_saved if _cookies_saved else "")
+        if idx >= 0:
+            self.cookies_combo.setCurrentIndex(idx)
+        form.addRow("Cookie 来源:", self.cookies_combo)
+
+        cookies_file_row = QHBoxLayout()
+        self.cookies_file_edit = QLineEdit()
+        self.cookies_file_edit.setPlaceholderText("可选：Netscape 格式 .txt，优先于上方浏览器")
+        self.cookies_file_edit.setText(self._cfg.get("cookies_file", ""))
+        self.cookies_file_edit.setToolTip("用扩展（如 Get cookies.txt）导出 youtube.com 的 Cookie，选此文件可避免 Chrome 未关闭时的报错")
+        cookies_file_row.addWidget(self.cookies_file_edit)
+        cookies_browse_btn = QPushButton("选择…")
+        cookies_browse_btn.clicked.connect(self._browse_cookies_file)
+        cookies_file_row.addWidget(cookies_browse_btn)
+        form.addRow("Cookie 文件:", cookies_file_row)
+
+        self.js_runtime_combo = QComboBox()
+        self.js_runtime_combo.setToolTip("遇「n challenge solving failed」或「Only images are available」时，可试选 Node（需已安装 Node.js 20+）或勾选下方 EJS")
+        self.js_runtime_combo.addItem("默认(Deno)", "")
+        self.js_runtime_combo.addItem("Node", "node")
+        _jr = (self._cfg.get("ytdlp_js_runtime") or "").strip().lower()
+        idx = self.js_runtime_combo.findData(_jr if _jr else "")
+        if idx >= 0:
+            self.js_runtime_combo.setCurrentIndex(idx)
+        form.addRow("JS 运行时:", self.js_runtime_combo)
+
+        self.check_ejs_github = QCheckBox("从 GitHub 拉取 EJS 脚本（遇 n challenge 失败时勾选）")
+        self.check_ejs_github.setToolTip("相当于 yt-dlp --remote-components ejs:github，需能访问 GitHub")
+        self.check_ejs_github.setChecked(bool(self._cfg.get("ytdlp_remote_components") == "ejs:github"))
+        form.addRow("", self.check_ejs_github)
 
         out_row = QHBoxLayout()
         self.output_edit = QLineEdit()
@@ -321,6 +386,13 @@ class MainWindow(QMainWindow):
             self.output_edit.setText(d)
             self._refresh_video_source()
 
+    def _browse_cookies_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 Cookie 文件（Netscape .txt）", self.cookies_file_edit.text(), "Text (*.txt);;All (*)"
+        )
+        if path:
+            self.cookies_file_edit.setText(path)
+
     def _get_output_dir(self) -> Path:
         raw = (self.output_edit.text() or "").strip() or "./ppt_output"
         p = Path(raw)
@@ -390,6 +462,10 @@ class MainWindow(QMainWindow):
         """把当前表单写入 config.json。"""
         self._cfg["url"] = self.url_edit.text().strip()
         self._cfg["output_dir"] = self.output_edit.text().strip() or "./ppt_output"
+        self._cfg["cookies_from_browser"] = (self.cookies_combo.currentData() or "").strip()
+        self._cfg["cookies_file"] = self.cookies_file_edit.text().strip()
+        self._cfg["ytdlp_js_runtime"] = (self.js_runtime_combo.currentData() or "").strip()
+        self._cfg["ytdlp_remote_components"] = "ejs:github" if self.check_ejs_github.isChecked() else ""
         try:
             self._cfg["crop_left"] = float(self.crop_left.text() or "0.35")
             self._cfg["crop_top"] = float(self.crop_top.text() or "0")
@@ -433,6 +509,10 @@ class MainWindow(QMainWindow):
             url, out,
             force=self._cfg.get("force_download"),
             project_root=self._project_root,
+            cookies_from_browser=self.cookies_combo.currentData() or "",
+            cookies_file=self.cookies_file_edit.text().strip(),
+            js_runtime=self.js_runtime_combo.currentData() or "",
+            remote_components="ejs:github" if self.check_ejs_github.isChecked() else "",
         )
         self._worker.progress.connect(self._append_download_log)
         self._worker.finished.connect(self._on_worker_finished)
@@ -510,11 +590,19 @@ class MainWindow(QMainWindow):
             if self.log_text.toPlainText().strip():
                 self.log_text.appendPlainText("\n完成。")
             self._refresh_video_source()
-            QMessageBox.information(self, "完成", "操作已完成")
         else:
             if self.log_text.toPlainText().strip():
                 self.log_text.appendPlainText(f"\n失败: {err}")
-            QMessageBox.critical(self, "错误", err or "未知错误")
+            msg = err or "未知错误"
+            if "challenge" in msg.lower() or "only images" in msg.lower() or "format is not available" in msg.lower():
+                msg += (
+                    "\n\n【YouTube 解析提示】当前多为 n challenge 导致无法获取视频格式。可尝试：\n"
+                    "1. 勾选「从 GitHub 拉取 EJS 脚本」后重试；\n"
+                    "2. 若已安装 Node.js 20+，将「JS 运行时」选为 Node 后重试；\n"
+                    "3. 或安装 Deno 并执行: pip install -U \"yt-dlp[default]\"\n"
+                    "详见: https://github.com/yt-dlp/yt-dlp/wiki/EJS"
+                )
+            QMessageBox.critical(self, "错误", msg)
         self._worker = None
 
 
