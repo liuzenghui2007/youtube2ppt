@@ -15,6 +15,9 @@ from PySide6.QtWidgets import (
     QSlider,
     QCheckBox,
     QComboBox,
+    QRadioButton,
+    QButtonGroup,
+    QStackedWidget,
     QFileDialog,
     QMessageBox,
     QGroupBox,
@@ -280,23 +283,47 @@ class MainWindow(QMainWindow):
         crop_row.addWidget(self.crop_height)
         form.addRow("裁剪(L,T,W,H):", crop_row)
 
+        # 提取方式：两种模式互斥，用单选
+        extract_mode_row = QHBoxLayout()
+        self.radio_evp = QRadioButton("evp（相似度翻页）")
+        self.radio_evp.setToolTip("按帧相似度检测翻页")
+        self.radio_scenedetect = QRadioButton("场景检测（PySceneDetect）")
+        self.radio_scenedetect.setToolTip("按画面变化切场景，每场景一帧")
+        self.extract_method_group = QButtonGroup(self)
+        self.extract_method_group.addButton(self.radio_evp)
+        self.extract_method_group.addButton(self.radio_scenedetect)
+        _em = (self._cfg.get("extract_method") or "evp").strip().lower()
+        if _em == "scenedetect":
+            self.radio_scenedetect.setChecked(True)
+        else:
+            self.radio_evp.setChecked(True)
+        extract_mode_row.addWidget(self.radio_evp)
+        extract_mode_row.addWidget(self.radio_scenedetect)
+        extract_mode_row.addStretch()
+        form.addRow("提取方式:", extract_mode_row)
+
+        # 模式参数互斥：只显示当前模式对应的一个参数
+        self.extract_param_stack = QStackedWidget()
+        page_evp = QWidget()
+        lay_evp = QFormLayout(page_evp)
         self.similarity_edit = QLineEdit()
         self.similarity_edit.setText(str(self._cfg.get("similarity", 0.45)))
-        form.addRow("相似度:", self.similarity_edit)
-
-        self.extract_method_combo = QComboBox()
-        self.extract_method_combo.setToolTip("evp：按帧相似度检测翻页；场景检测：按画面变化切场景，每场景一帧，关键帧更稳")
-        self.extract_method_combo.addItem("evp（相似度翻页）", "evp")
-        self.extract_method_combo.addItem("场景检测（PySceneDetect）", "scenedetect")
-        _em = (self._cfg.get("extract_method") or "evp").strip().lower()
-        idx = self.extract_method_combo.findData(_em if _em in ("evp", "scenedetect") else "evp")
-        self.extract_method_combo.setCurrentIndex(max(0, idx))
-        form.addRow("提取方式:", self.extract_method_combo)
-
+        self.similarity_edit.setToolTip("两帧相似度低于此值视为翻页，越大关键帧越少")
+        lay_evp.addRow("相似度:", self.similarity_edit)
+        self.extract_param_stack.addWidget(page_evp)
+        page_scene = QWidget()
+        lay_scene = QFormLayout(page_scene)
         self.scene_threshold_edit = QLineEdit()
-        self.scene_threshold_edit.setToolTip("仅场景检测时生效。越小检测越多关键帧，越大越少。常用 12~30，默认 27")
+        self.scene_threshold_edit.setToolTip("越小检测越多关键帧，越大越少。常用 12~30，默认 27")
         self.scene_threshold_edit.setText(str(self._cfg.get("scene_threshold", 27.0)))
-        form.addRow("场景检测阈值:", self.scene_threshold_edit)
+        lay_scene.addRow("阈值:", self.scene_threshold_edit)
+        self.extract_param_stack.addWidget(page_scene)
+        form.addRow("", self.extract_param_stack)
+
+        def _on_extract_mode_changed():
+            self.extract_param_stack.setCurrentIndex(1 if self.radio_scenedetect.isChecked() else 0)
+        self.radio_evp.toggled.connect(_on_extract_mode_changed)
+        _on_extract_mode_changed()
 
         self.start_edit = QLineEdit()
         self.start_edit.setPlaceholderText("00:00:00")
@@ -497,7 +524,7 @@ class MainWindow(QMainWindow):
             self._cfg["similarity"] = float(self.similarity_edit.text() or "0.45")
         except ValueError:
             pass
-        self._cfg["extract_method"] = (self.extract_method_combo.currentData() or "evp").strip()
+        self._cfg["extract_method"] = "scenedetect" if self.radio_scenedetect.isChecked() else "evp"
         try:
             self._cfg["scene_threshold"] = float(self.scene_threshold_edit.text() or "27")
         except ValueError:
@@ -608,7 +635,7 @@ class MainWindow(QMainWindow):
             self.check_full.isChecked(),
             self.check_images.isChecked(),
             self._project_root,
-            extract_method=self.extract_method_combo.currentData() or "evp",
+            extract_method="scenedetect" if self.radio_scenedetect.isChecked() else "evp",
             scene_threshold=scene_th,
         )
         self._worker.progress.connect(self._append_download_log)
