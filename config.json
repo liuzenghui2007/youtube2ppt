@@ -9,7 +9,7 @@
   "crop_top": 0.0,
   "crop_width": 0.735,
   "crop_height": 1.0,
-  "similarity": 0.75,
+  "similarity": 0.9,
   "start_time": "",
   "end_time": "",
   "output_ppt_only": true,
