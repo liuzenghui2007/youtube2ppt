@@ -1,4 +1,4 @@
-"""模块：用 evp 检测翻页，生成仅 PPT 区域 / 全屏 两种 PDF。"""
+"""模块：用 evp 或 PySceneDetect 检测关键帧，生成仅 PPT 区域 / 全屏 两种 PDF。"""
 from __future__ import annotations
 
 import os
@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import evp_utils
+from . import scene_extract
 
 
 def _hms_to_seconds(hms: str) -> int | None:
@@ -37,11 +38,29 @@ def run_extract(
     extract_images: bool,
     project_root: Path | None = None,
     progress_callback: Callable[[str], None] | None = None,
+    extract_method: str = "evp",
+    scene_threshold: float = 27.0,
 ) -> dict[str, Path]:
     """
-    检测用裁剪视频跑 evp；合成可选「仅 PPT 区域」和「全屏」。
-    progress_callback 可接收 evp 的每行输出（如 process: 45%）。
+    提取方式：evp（相似度翻页）或 scenedetect（场景关键帧）。合成可选「仅 PPT 区域」和「全屏」。
+    progress_callback 可接收进度输出。scene_threshold 仅用于场景检测（数值越小检测越多）。
     """
+    if (extract_method or "").strip().lower() == "scenedetect":
+        return scene_extract.run_extract_scenedetect(
+            output_dir=output_dir,
+            video_full=video_full,
+            video_cropped=video_cropped,
+            crop=crop,
+            start_time=start_time or "",
+            end_time=end_time or "",
+            output_ppt_only=output_ppt_only,
+            output_full_screen=output_full_screen,
+            extract_images=extract_images,
+            project_root=project_root,
+            progress_callback=progress_callback,
+            scene_threshold=scene_threshold,
+        )
+
     output_dir = Path(output_dir).resolve()
     video_for_evp = video_cropped if video_cropped and video_cropped.is_file() else video_full
     env = os.environ.copy()

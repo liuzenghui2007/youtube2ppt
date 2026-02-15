@@ -122,6 +122,8 @@ class ExtractWorker(QThread):
         output_full_screen: bool,
         extract_images: bool,
         project_root: Path,
+        extract_method: str = "evp",
+        scene_threshold: float = 27.0,
     ):
         super().__init__()
         self.output_dir = output_dir
@@ -135,6 +137,8 @@ class ExtractWorker(QThread):
         self.output_full_screen = output_full_screen
         self.extract_images = extract_images
         self.project_root = project_root
+        self.extract_method = (extract_method or "evp").strip().lower()
+        self.scene_threshold = float(scene_threshold)
 
     def run(self):
         try:
@@ -143,7 +147,10 @@ class ExtractWorker(QThread):
             if not v_crop.is_file():
                 self.progress.emit("正在裁剪视频…")
                 run_crop(self.video_full, self.output_dir, self.crop, force=False)
-            self.progress.emit("正在运行 evp 检测翻页…")
+            if self.extract_method == "scenedetect":
+                self.progress.emit("正在运行 PySceneDetect 场景检测…")
+            else:
+                self.progress.emit("正在运行 evp 检测翻页…")
             run_extract(
                 self.output_dir,
                 self.video_full,
@@ -157,6 +164,8 @@ class ExtractWorker(QThread):
                 self.extract_images,
                 self.project_root,
                 progress_callback=lambda line: self.progress.emit(line),
+                extract_method=self.extract_method,
+                scene_threshold=self.scene_threshold,
             )
             self.finished.emit(True, "")
         except Exception as e:
@@ -274,6 +283,20 @@ class MainWindow(QMainWindow):
         self.similarity_edit = QLineEdit()
         self.similarity_edit.setText(str(self._cfg.get("similarity", 0.45)))
         form.addRow("相似度:", self.similarity_edit)
+
+        self.extract_method_combo = QComboBox()
+        self.extract_method_combo.setToolTip("evp：按帧相似度检测翻页；场景检测：按画面变化切场景，每场景一帧，关键帧更稳")
+        self.extract_method_combo.addItem("evp（相似度翻页）", "evp")
+        self.extract_method_combo.addItem("场景检测（PySceneDetect）", "scenedetect")
+        _em = (self._cfg.get("extract_method") or "evp").strip().lower()
+        idx = self.extract_method_combo.findData(_em if _em in ("evp", "scenedetect") else "evp")
+        self.extract_method_combo.setCurrentIndex(max(0, idx))
+        form.addRow("提取方式:", self.extract_method_combo)
+
+        self.scene_threshold_edit = QLineEdit()
+        self.scene_threshold_edit.setToolTip("仅场景检测时生效。越小检测越多关键帧，越大越少。常用 12~30，默认 27")
+        self.scene_threshold_edit.setText(str(self._cfg.get("scene_threshold", 27.0)))
+        form.addRow("场景检测阈值:", self.scene_threshold_edit)
 
         self.start_edit = QLineEdit()
         self.start_edit.setPlaceholderText("00:00:00")
@@ -474,6 +497,11 @@ class MainWindow(QMainWindow):
             self._cfg["similarity"] = float(self.similarity_edit.text() or "0.45")
         except ValueError:
             pass
+        self._cfg["extract_method"] = (self.extract_method_combo.currentData() or "evp").strip()
+        try:
+            self._cfg["scene_threshold"] = float(self.scene_threshold_edit.text() or "27")
+        except ValueError:
+            pass
         self._cfg["start_time"] = self.start_edit.text().strip()
         self._cfg["end_time"] = self.end_edit.text().strip()
         self._cfg["output_ppt_only"] = self.check_ppt_only.isChecked()
@@ -561,6 +589,7 @@ class MainWindow(QMainWindow):
         try:
             crop = self._get_crop()
             sim = float(self.similarity_edit.text() or "0.45")
+            scene_th = float(self.scene_threshold_edit.text() or "27")
         except ValueError as e:
             QMessageBox.warning(self, "提示", str(e))
             return
@@ -579,6 +608,8 @@ class MainWindow(QMainWindow):
             self.check_full.isChecked(),
             self.check_images.isChecked(),
             self._project_root,
+            extract_method=self.extract_method_combo.currentData() or "evp",
+            scene_threshold=scene_th,
         )
         self._worker.progress.connect(self._append_download_log)
         self._worker.finished.connect(self._on_worker_finished)

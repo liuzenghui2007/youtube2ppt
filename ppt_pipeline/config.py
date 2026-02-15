@@ -19,6 +19,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "crop_width": 0.65,
     "crop_height": 1.0,
     "similarity": 0.45,
+    "extract_method": "evp",
+    "scene_threshold": 27.0,
     "start_time": "",
     "end_time": "",
     "output_ppt_only": True,
