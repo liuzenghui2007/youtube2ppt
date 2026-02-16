@@ -94,8 +94,14 @@ def main() -> None:
             cfg.get("end_time", "") or "",
             bool(cfg.get("output_ppt_only", True)),
             bool(cfg.get("output_full_screen", False)),
+            bool(cfg.get("output_pptx", True)),
             bool(cfg.get("extract_images", True)),
             project_root,
+            extract_method=(cfg.get("extract_method") or "evp").strip().lower(),
+            scene_threshold=float(cfg.get("scene_threshold", 12)),
+            scene_min_scene_len=int(cfg.get("scene_min_scene_len", 5)),
+            scene_static_threshold=float(cfg.get("scene_static_threshold", 2)),
+            scene_duplicate_threshold=float(cfg.get("scene_duplicate_threshold", 1.5)),
         )
         print("提取完成，见", output_dir)
 

@@ -124,10 +124,14 @@ class ExtractWorker(QThread):
         end_time: str,
         output_ppt_only: bool,
         output_full_screen: bool,
+        output_pptx: bool,
         extract_images: bool,
         project_root: Path,
         extract_method: str = "evp",
         scene_threshold: float = 27.0,
+        scene_min_scene_len: int = 8,
+        scene_static_threshold: float = 5.0,
+        scene_duplicate_threshold: float = 3.0,
     ):
         super().__init__()
         self.output_dir = output_dir
@@ -139,10 +143,14 @@ class ExtractWorker(QThread):
         self.end_time = end_time
         self.output_ppt_only = output_ppt_only
         self.output_full_screen = output_full_screen
+        self.output_pptx = output_pptx
         self.extract_images = extract_images
         self.project_root = project_root
         self.extract_method = (extract_method or "evp").strip().lower()
         self.scene_threshold = float(scene_threshold)
+        self.scene_min_scene_len = int(scene_min_scene_len)
+        self.scene_static_threshold = float(scene_static_threshold)
+        self.scene_duplicate_threshold = float(scene_duplicate_threshold)
 
     def run(self):
         try:
@@ -166,11 +174,15 @@ class ExtractWorker(QThread):
                 self.end_time,
                 self.output_ppt_only,
                 self.output_full_screen,
+                self.output_pptx,
                 self.extract_images,
                 self.project_root,
                 progress_callback=lambda line: self.progress.emit(line),
                 extract_method=self.extract_method,
                 scene_threshold=self.scene_threshold,
+                scene_min_scene_len=self.scene_min_scene_len,
+                scene_static_threshold=self.scene_static_threshold,
+                scene_duplicate_threshold=self.scene_duplicate_threshold,
             )
             self.finished.emit(True, "")
         except Exception as e:
@@ -328,9 +340,21 @@ class MainWindow(QMainWindow):
         page_scene = QWidget()
         lay_scene = QFormLayout(page_scene)
         self.scene_threshold_edit = QLineEdit()
-        self.scene_threshold_edit.setToolTip("越小检测越多关键帧，越大越少。常用 12~30，默认 27")
-        self.scene_threshold_edit.setText(str(self._cfg.get("scene_threshold", 27.0)))
+        self.scene_threshold_edit.setToolTip("越小检测到的翻页越多。图片不足时试 10～12；误检多时试 18～25。默认 12")
+        self.scene_threshold_edit.setText(str(self._cfg.get("scene_threshold", 12.0)))
         lay_scene.addRow("阈值:", self.scene_threshold_edit)
+        self.scene_min_scene_len_edit = QLineEdit()
+        self.scene_min_scene_len_edit.setToolTip("最小场景长度(帧)。图片不足时试 3～5；同一页多帧时试 8～10。默认 5")
+        self.scene_min_scene_len_edit.setText(str(self._cfg.get("scene_min_scene_len", 5)))
+        lay_scene.addRow("最小场景(帧):", self.scene_min_scene_len_edit)
+        self.scene_static_edit = QLineEdit()
+        self.scene_static_edit.setToolTip("静态帧过滤(拉普拉斯方差)。图片不足时可填 0 关闭，或试 1～2。默认 2")
+        self.scene_static_edit.setText(str(self._cfg.get("scene_static_threshold", 2.0)))
+        lay_scene.addRow("静态过滤:", self.scene_static_edit)
+        self.scene_duplicate_edit = QLineEdit()
+        self.scene_duplicate_edit.setToolTip("重复场景过滤(像素均差)。图片不足时可填 0 关闭，或试 1。默认 1.5")
+        self.scene_duplicate_edit.setText(str(self._cfg.get("scene_duplicate_threshold", 1.5)))
+        lay_scene.addRow("重复过滤:", self.scene_duplicate_edit)
         self.extract_param_stack.addWidget(page_scene)
         form.addRow("", self.extract_param_stack)
 
@@ -356,6 +380,11 @@ class MainWindow(QMainWindow):
         self.check_full = QCheckBox("导出全屏 PDF")
         self.check_full.setChecked(bool(self._cfg.get("output_full_screen", False)))
         form.addRow("", self.check_full)
+
+        self.check_pptx = QCheckBox("导出 PowerPoint (.pptx)")
+        self.check_pptx.setToolTip("一帧一页，可编辑；便于后续加动画、备注或语音转文字")
+        self.check_pptx.setChecked(bool(self._cfg.get("output_pptx", True)))
+        form.addRow("", self.check_pptx)
 
         self.check_images = QCheckBox("导出单页图片")
         self.check_images.setChecked(bool(self._cfg.get("extract_images", True)))
@@ -556,13 +585,17 @@ class MainWindow(QMainWindow):
             pass
         self._cfg["extract_method"] = "scenedetect" if self.radio_scenedetect.isChecked() else "evp"
         try:
-            self._cfg["scene_threshold"] = float(self.scene_threshold_edit.text() or "27")
+            self._cfg["scene_threshold"] = float(self.scene_threshold_edit.text() or "12")
+            self._cfg["scene_min_scene_len"] = int(self.scene_min_scene_len_edit.text() or "5")
+            self._cfg["scene_static_threshold"] = float(self.scene_static_edit.text() or "2")
+            self._cfg["scene_duplicate_threshold"] = float(self.scene_duplicate_edit.text() or "1.5")
         except ValueError:
             pass
         self._cfg["start_time"] = self.start_edit.text().strip()
         self._cfg["end_time"] = self.end_edit.text().strip()
         self._cfg["output_ppt_only"] = self.check_ppt_only.isChecked()
         self._cfg["output_full_screen"] = self.check_full.isChecked()
+        self._cfg["output_pptx"] = self.check_pptx.isChecked()
         self._cfg["extract_images"] = self.check_images.isChecked()
         save_config(self._cfg, self._project_root)
         if show_message:
@@ -658,7 +691,10 @@ class MainWindow(QMainWindow):
         try:
             crop = self._get_crop()
             sim = float(self.similarity_edit.text() or "0.45")
-            scene_th = float(self.scene_threshold_edit.text() or "27")
+            scene_th = float(self.scene_threshold_edit.text() or "12")
+            scene_min_len = int(self.scene_min_scene_len_edit.text() or "5")
+            scene_static = float(self.scene_static_edit.text() or "2")
+            scene_dup = float(self.scene_duplicate_edit.text() or "1.5")
         except ValueError as e:
             QMessageBox.warning(self, "提示", str(e))
             return
@@ -676,10 +712,14 @@ class MainWindow(QMainWindow):
             self.end_edit.text().strip(),
             self.check_ppt_only.isChecked(),
             self.check_full.isChecked(),
+            self.check_pptx.isChecked(),
             self.check_images.isChecked(),
             self._project_root,
             extract_method="scenedetect" if self.radio_scenedetect.isChecked() else "evp",
             scene_threshold=scene_th,
+            scene_min_scene_len=scene_min_len,
+            scene_static_threshold=scene_static,
+            scene_duplicate_threshold=scene_dup,
         )
         self._worker.progress.connect(self._append_download_log)
         self._worker.finished.connect(self._on_worker_finished)

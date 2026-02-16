@@ -1,11 +1,23 @@
-"""基于 PySceneDetect 的场景关键帧提取：每场景取一帧，再合成 PDF。"""
+"""基于 PySceneDetect 的场景关键帧提取：每场景取一帧，再合成 PDF。针对纯 PPT 无演讲者优化。"""
 from __future__ import annotations
 
 import shutil
 from pathlib import Path
 from typing import Callable
 
+import cv2
+import numpy as np
+
 from . import evp_utils
+
+
+def _is_frame_static(frame: np.ndarray, static_threshold: float = 5.0) -> bool:
+    """判断是否为静态帧（编码噪点等），用于过滤误检。拉普拉斯方差小于阈值视为静态。"""
+    if frame is None or frame.size == 0:
+        return True
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    laplacian_var = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return laplacian_var < static_threshold
 
 
 def _hms_to_seconds(hms: str) -> float | None:
@@ -30,14 +42,18 @@ def run_extract_scenedetect(
     end_time: str,
     output_ppt_only: bool,
     output_full_screen: bool,
-    extract_images: bool,
+    output_pptx: bool = True,
+    extract_images: bool = True,
     project_root: Path | None = None,
     progress_callback: Callable[[str], None] | None = None,
-    scene_threshold: float = 27.0,
+    scene_threshold: float = 12.0,
+    scene_min_scene_len: int = 5,
+    scene_static_threshold: float = 2.0,
+    scene_duplicate_threshold: float = 1.5,
 ) -> dict[str, Path]:
     """
-    用 PySceneDetect 检测场景边界，每个场景取中间时刻一帧，再合成 PDF。
-    与 evp 二选一；适合需要「关键帧更准」、少重影的场景。
+    用 PySceneDetect 检测场景边界，每场景取起始帧（纯 PPT 无演讲者优化）。
+    支持：min_scene_len、静态帧过滤、重复场景过滤。
     """
     from scenedetect import open_video, SceneManager, ContentDetector
 
@@ -54,25 +70,57 @@ def run_extract_scenedetect(
     _log("PySceneDetect: 正在检测场景…")
     video = open_video(str(video_for_detect))
     scene_manager = SceneManager()
-    scene_manager.add_detector(ContentDetector(threshold=float(scene_threshold)))
+    scene_manager.add_detector(
+        ContentDetector(
+            threshold=float(scene_threshold),
+            min_scene_len=int(scene_min_scene_len),
+        )
+    )
     scene_manager.detect_scenes(video)
     scene_list = scene_manager.get_scene_list()
 
-    # 每个场景取中间时刻（秒）
+    # 纯 PPT 优化：过滤静态噪点与重复场景，并取起始帧时间（非中间）
     times_sec: list[float] = []
-    for start_tc, end_tc in scene_list:
-        s = start_tc.get_seconds()
-        e = end_tc.get_seconds()
-        mid = (s + e) / 2.0
-        if start_sec is not None and mid < start_sec:
-            continue
-        if end_sec is not None and mid > end_sec:
-            continue
-        times_sec.append(mid)
+    if scene_static_threshold > 0 or scene_duplicate_threshold > 0:
+        cap = cv2.VideoCapture(str(video_for_detect))
+        prev_frame: np.ndarray | None = None
+        try:
+            for start_tc, end_tc in scene_list:
+                s = start_tc.get_seconds()
+                if start_sec is not None and s < start_sec:
+                    continue
+                if end_sec is not None and s > end_sec:
+                    continue
+                cap.set(cv2.CAP_PROP_POS_MSEC, s * 1000.0)
+                ret, frame = cap.read()
+                if not ret or frame is None:
+                    times_sec.append(s)
+                    continue
+                if scene_static_threshold > 0 and _is_frame_static(frame, scene_static_threshold):
+                    continue
+                if scene_duplicate_threshold > 0 and prev_frame is not None:
+                    diff = cv2.absdiff(
+                        cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY),
+                        cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY),
+                    )
+                    if np.mean(diff) < scene_duplicate_threshold:
+                        continue
+                times_sec.append(s)
+                prev_frame = frame.copy()
+        finally:
+            cap.release()
+    else:
+        for start_tc, end_tc in scene_list:
+            s = start_tc.get_seconds()
+            if start_sec is not None and s < start_sec:
+                continue
+            if end_sec is not None and s > end_sec:
+                continue
+            times_sec.append(s)
 
     times_sec.sort()
-    # 相邻关键帧至少间隔 2 秒，避免同一页多帧
-    min_gap = 2.0
+    # 相邻关键帧至少间隔 1 秒，避免同一页多帧，同时减少漏页
+    min_gap = 1.0
     filtered: list[float] = []
     for ts in times_sec:
         if not filtered or (ts - filtered[-1]) >= min_gap:
@@ -104,6 +152,8 @@ def run_extract_scenedetect(
         out_ppt = output_dir / "slides_ppt_only.pdf"
         evp_utils.frames_to_pdf(paths, out_ppt)
         result["slides_ppt_only"] = out_ppt
+        if output_pptx:
+            evp_utils.frames_to_pptx(paths, output_dir / "slides_ppt_only.pptx")
         if extract_images:
             img_dir = output_dir / "images_ppt_only"
             img_dir.mkdir(parents=True, exist_ok=True)
@@ -122,6 +172,8 @@ def run_extract_scenedetect(
             out_full = output_dir / "slides_full.pdf"
             evp_utils.frames_to_pdf(paths_full, out_full)
             result["slides_full"] = out_full
+            if output_pptx:
+                evp_utils.frames_to_pptx(paths_full, output_dir / "slides_full.pptx")
             if extract_images:
                 img_dir = output_dir / "images_full"
                 img_dir.mkdir(parents=True, exist_ok=True)

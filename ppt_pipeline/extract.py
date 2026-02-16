@@ -35,11 +35,15 @@ def run_extract(
     end_time: str,
     output_ppt_only: bool,
     output_full_screen: bool,
-    extract_images: bool,
+    output_pptx: bool = True,
+    extract_images: bool = True,
     project_root: Path | None = None,
     progress_callback: Callable[[str], None] | None = None,
     extract_method: str = "evp",
-    scene_threshold: float = 27.0,
+    scene_threshold: float = 12.0,
+    scene_min_scene_len: int = 5,
+    scene_static_threshold: float = 2.0,
+    scene_duplicate_threshold: float = 1.5,
 ) -> dict[str, Path]:
     """
     提取方式：evp（相似度翻页）或 scenedetect（场景关键帧）。合成可选「仅 PPT 区域」和「全屏」。
@@ -55,10 +59,14 @@ def run_extract(
             end_time=end_time or "",
             output_ppt_only=output_ppt_only,
             output_full_screen=output_full_screen,
+            output_pptx=output_pptx,
             extract_images=extract_images,
             project_root=project_root,
             progress_callback=progress_callback,
             scene_threshold=scene_threshold,
+            scene_min_scene_len=scene_min_scene_len,
+            scene_static_threshold=scene_static_threshold,
+            scene_duplicate_threshold=scene_duplicate_threshold,
         )
 
     output_dir = Path(output_dir).resolve()
@@ -115,6 +123,8 @@ def run_extract(
         out_ppt = output_dir / "slides_ppt_only.pdf"
         shutil.copy(evp_pdf, out_ppt)
         result["slides_ppt_only"] = out_ppt
+        if output_pptx:
+            _pdf_to_pptx_via_images(out_ppt, output_dir / "slides_ppt_only.pptx", project_root)
         if extract_images:
             img_dir = output_dir / "images_ppt_only"
             img_dir.mkdir(parents=True, exist_ok=True)
@@ -134,6 +144,8 @@ def run_extract(
                 out_full = output_dir / "slides_full.pdf"
                 evp_utils.frames_to_pdf(paths, out_full)
                 result["slides_full"] = out_full
+                if output_pptx:
+                    evp_utils.frames_to_pptx(paths, output_dir / "slides_full.pptx")
                 if extract_images:
                     img_dir = output_dir / "images_full"
                     img_dir.mkdir(parents=True, exist_ok=True)
@@ -142,6 +154,26 @@ def run_extract(
                     result["images_full"] = img_dir
 
     return result
+
+
+def _pdf_to_pptx_via_images(pdf_path: Path, pptx_path: Path, project_root: Path | None) -> None:
+    """通过 PDF 转临时图片再生成 PPTX（evp 分支无直接帧列表时用）。"""
+    import tempfile
+    try:
+        import fitz
+    except ImportError:
+        return
+    out_dir = Path(tempfile.mkdtemp(prefix="ppt_pptx_"))
+    try:
+        doc = fitz.open(pdf_path)
+        for i in range(len(doc)):
+            doc[i].get_pixmap(dpi=150).save(out_dir / f"page_{i + 1:03d}.png")
+        doc.close()
+        paths = sorted(out_dir.glob("*.png"))
+        if paths:
+            evp_utils.frames_to_pptx(paths, pptx_path)
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
 
 
 def _pdf_to_images(pdf_path: Path, out_dir: Path, project_root: Path | None) -> None:

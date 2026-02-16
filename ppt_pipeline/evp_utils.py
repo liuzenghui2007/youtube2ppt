@@ -72,3 +72,33 @@ def frames_to_pdf(image_paths: list[Path], pdf_path: Path, *, size_wh: tuple[int
         pdf.image(name=str(img_path), x=0, y=0, w=pdf.w, h=pdf.h)
     # 旧 API: output(path, "F")
     pdf.output(str(pdf_path), "F")
+
+
+def frames_to_pptx(
+    image_paths: list[Path],
+    pptx_path: Path,
+    *,
+    slide_notes: list[str] | None = None,
+) -> None:
+    """多张图片生成 PowerPoint：一帧一页，可编辑。slide_notes 为每页备注（可选，预留语音转文字）。"""
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    if not image_paths:
+        raise ValueError("无图片可合成")
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)
+    prs.slide_height = Inches(7.5)
+    blank = prs.slide_layouts[6]  # Blank
+    notes_list = slide_notes if slide_notes and len(slide_notes) >= len(image_paths) else None
+    for i, img_path in enumerate(image_paths):
+        slide = prs.slides.add_slide(blank)
+        slide.shapes.add_picture(
+            str(img_path),
+            Inches(0), Inches(0),
+            width=prs.slide_width,
+            height=prs.slide_height,
+        )
+        if notes_list and notes_list[i].strip():
+            slide.notes_slide.notes_text_frame.text = notes_list[i].strip()
+    prs.save(str(pptx_path))
