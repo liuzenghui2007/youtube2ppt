@@ -16,7 +16,7 @@
   "scene_min_scene_len": 8,
   "scene_static_threshold": 5.0,
   "scene_duplicate_threshold": 3.0,
-  "start_time": "00:01:00",
+  "start_time": "",
   "end_time": "",
   "output_ppt_only": true,
   "output_full_screen": false,

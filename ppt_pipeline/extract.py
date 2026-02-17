@@ -44,6 +44,9 @@ def run_extract(
     scene_min_scene_len: int = 5,
     scene_static_threshold: float = 2.0,
     scene_duplicate_threshold: float = 1.5,
+    scene_min_gap: float = 0.5,
+    scene_max_gap_sec: float = 45.0,
+    scene_interval_fill_sec: float = 15.0,
 ) -> dict[str, Path]:
     """
     提取方式：evp（相似度翻页）或 scenedetect（场景关键帧）。合成可选「仅 PPT 区域」和「全屏」。
@@ -67,6 +70,9 @@ def run_extract(
             scene_min_scene_len=scene_min_scene_len,
             scene_static_threshold=scene_static_threshold,
             scene_duplicate_threshold=scene_duplicate_threshold,
+            scene_min_gap=scene_min_gap,
+            scene_max_gap_sec=scene_max_gap_sec,
+            scene_interval_fill_sec=scene_interval_fill_sec,
         )
 
     output_dir = Path(output_dir).resolve()

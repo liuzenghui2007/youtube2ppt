@@ -102,6 +102,9 @@ def main() -> None:
             scene_min_scene_len=int(cfg.get("scene_min_scene_len", 5)),
             scene_static_threshold=float(cfg.get("scene_static_threshold", 2)),
             scene_duplicate_threshold=float(cfg.get("scene_duplicate_threshold", 1.5)),
+            scene_min_gap=float(cfg.get("scene_min_gap", 0.5)),
+            scene_max_gap_sec=float(cfg.get("scene_max_gap_sec", 45)),
+            scene_interval_fill_sec=float(cfg.get("scene_interval_fill_sec", 15)),
         )
         print("提取完成，见", output_dir)
 

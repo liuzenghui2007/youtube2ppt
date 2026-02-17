@@ -132,6 +132,9 @@ class ExtractWorker(QThread):
         scene_min_scene_len: int = 8,
         scene_static_threshold: float = 5.0,
         scene_duplicate_threshold: float = 3.0,
+        scene_min_gap: float = 0.5,
+        scene_max_gap_sec: float = 45.0,
+        scene_interval_fill_sec: float = 15.0,
     ):
         super().__init__()
         self.output_dir = output_dir
@@ -151,6 +154,9 @@ class ExtractWorker(QThread):
         self.scene_min_scene_len = int(scene_min_scene_len)
         self.scene_static_threshold = float(scene_static_threshold)
         self.scene_duplicate_threshold = float(scene_duplicate_threshold)
+        self.scene_min_gap = float(scene_min_gap)
+        self.scene_max_gap_sec = float(scene_max_gap_sec)
+        self.scene_interval_fill_sec = float(scene_interval_fill_sec)
 
     def run(self):
         try:
@@ -183,6 +189,9 @@ class ExtractWorker(QThread):
                 scene_min_scene_len=self.scene_min_scene_len,
                 scene_static_threshold=self.scene_static_threshold,
                 scene_duplicate_threshold=self.scene_duplicate_threshold,
+                scene_min_gap=self.scene_min_gap,
+                scene_max_gap_sec=self.scene_max_gap_sec,
+                scene_interval_fill_sec=self.scene_interval_fill_sec,
             )
             self.finished.emit(True, "")
         except Exception as e:
@@ -355,6 +364,18 @@ class MainWindow(QMainWindow):
         self.scene_duplicate_edit.setToolTip("重复场景过滤(像素均差)。图片不足时可填 0 关闭，或试 1。默认 1.5")
         self.scene_duplicate_edit.setText(str(self._cfg.get("scene_duplicate_threshold", 1.5)))
         lay_scene.addRow("重复过滤:", self.scene_duplicate_edit)
+        self.scene_min_gap_edit = QLineEdit()
+        self.scene_min_gap_edit.setToolTip("相邻关键帧最小间隔(秒)。页数多时可设 0.5；同一页多帧时可设 1～2。默认 0.5")
+        self.scene_min_gap_edit.setText(str(self._cfg.get("scene_min_gap", 0.5)))
+        lay_scene.addRow("最小间隔(秒):", self.scene_min_gap_edit)
+        self.scene_max_gap_edit = QLineEdit()
+        self.scene_max_gap_edit.setToolTip("两关键帧间隔超过此值(秒)时进行间隔补帧，补足纯PPT段漏检。0=关闭。默认 45")
+        self.scene_max_gap_edit.setText(str(self._cfg.get("scene_max_gap_sec", 45.0)))
+        lay_scene.addRow("补帧间隔上限(秒):", self.scene_max_gap_edit)
+        self.scene_interval_fill_edit = QLineEdit()
+        self.scene_interval_fill_edit.setToolTip("补帧时每隔多少秒取一帧，再与前后去重。默认 15")
+        self.scene_interval_fill_edit.setText(str(self._cfg.get("scene_interval_fill_sec", 15.0)))
+        lay_scene.addRow("补帧采样间隔(秒):", self.scene_interval_fill_edit)
         self.extract_param_stack.addWidget(page_scene)
         form.addRow("", self.extract_param_stack)
 
@@ -589,6 +610,9 @@ class MainWindow(QMainWindow):
             self._cfg["scene_min_scene_len"] = int(self.scene_min_scene_len_edit.text() or "5")
             self._cfg["scene_static_threshold"] = float(self.scene_static_edit.text() or "2")
             self._cfg["scene_duplicate_threshold"] = float(self.scene_duplicate_edit.text() or "1.5")
+            self._cfg["scene_min_gap"] = float(self.scene_min_gap_edit.text() or "0.5")
+            self._cfg["scene_max_gap_sec"] = float(self.scene_max_gap_edit.text() or "45")
+            self._cfg["scene_interval_fill_sec"] = float(self.scene_interval_fill_edit.text() or "15")
         except ValueError:
             pass
         self._cfg["start_time"] = self.start_edit.text().strip()
@@ -695,6 +719,9 @@ class MainWindow(QMainWindow):
             scene_min_len = int(self.scene_min_scene_len_edit.text() or "5")
             scene_static = float(self.scene_static_edit.text() or "2")
             scene_dup = float(self.scene_duplicate_edit.text() or "1.5")
+            scene_gap = float(self.scene_min_gap_edit.text() or "0.5")
+            scene_max_gap = float(self.scene_max_gap_edit.text() or "45")
+            scene_fill_intv = float(self.scene_interval_fill_edit.text() or "15")
         except ValueError as e:
             QMessageBox.warning(self, "提示", str(e))
             return
@@ -720,6 +747,9 @@ class MainWindow(QMainWindow):
             scene_min_scene_len=scene_min_len,
             scene_static_threshold=scene_static,
             scene_duplicate_threshold=scene_dup,
+            scene_min_gap=scene_gap,
+            scene_max_gap_sec=scene_max_gap,
+            scene_interval_fill_sec=scene_fill_intv,
         )
         self._worker.progress.connect(self._append_download_log)
         self._worker.finished.connect(self._on_worker_finished)

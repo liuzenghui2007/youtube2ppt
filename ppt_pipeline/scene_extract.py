@@ -50,10 +50,13 @@ def run_extract_scenedetect(
     scene_min_scene_len: int = 5,
     scene_static_threshold: float = 2.0,
     scene_duplicate_threshold: float = 1.5,
+    scene_min_gap: float = 0.5,
+    scene_max_gap_sec: float = 45.0,
+    scene_interval_fill_sec: float = 15.0,
 ) -> dict[str, Path]:
     """
     用 PySceneDetect 检测场景边界，每场景取起始帧（纯 PPT 无演讲者优化）。
-    支持：min_scene_len、静态帧过滤、重复场景过滤。
+    支持：min_scene_len、静态/重复过滤；间隔补帧（当两关键帧间隔>max_gap_sec 时按 interval_fill_sec 补点，再连续去重）。
     """
     from scenedetect import open_video, SceneManager, ContentDetector
 
@@ -78,6 +81,7 @@ def run_extract_scenedetect(
     )
     scene_manager.detect_scenes(video)
     scene_list = scene_manager.get_scene_list()
+    _log(f"PySceneDetect 原始场景数：{len(scene_list)}")
 
     # 纯 PPT 优化：过滤静态噪点与重复场景，并取起始帧时间（非中间）
     times_sec: list[float] = []
@@ -119,10 +123,12 @@ def run_extract_scenedetect(
             times_sec.append(s)
 
     times_sec.sort()
-    # 相邻关键帧至少间隔 1 秒，避免同一页多帧，同时减少漏页
-    min_gap = 1.0
+    # 相邻关键帧最小间隔（秒），可配置；页数多时可设 0.5，同一页多帧时可设 1～2
+    min_gap = max(0.0, float(scene_min_gap))
     filtered: list[float] = []
     for ts in times_sec:
+        if filtered and ts == filtered[-1]:
+            continue
         if not filtered or (ts - filtered[-1]) >= min_gap:
             filtered.append(ts)
     times_sec = filtered
@@ -132,7 +138,26 @@ def run_extract_scenedetect(
         times_sec = [first]
         _log("未检测到场景变化，使用单帧。")
 
+    # 间隔补帧：纯 PPT 段场景检测易漏，两关键帧间隔过大时按固定间隔补点
+    if (
+        scene_max_gap_sec > 0
+        and scene_interval_fill_sec > 0
+        and len(times_sec) >= 2
+    ):
+        fill_times: list[float] = []
+        for i in range(len(times_sec) - 1):
+            a, b = times_sec[i], times_sec[i + 1]
+            if b - a > scene_max_gap_sec:
+                t = a + scene_interval_fill_sec
+                while t < b:
+                    fill_times.append(t)
+                    t += scene_interval_fill_sec
+        if fill_times:
+            times_sec = sorted(times_sec + fill_times)
+            _log(f"间隔补帧：补 {len(fill_times)} 个时间点，共 {len(times_sec)} 个。")
+
     _log(f"共 {len(times_sec)} 个关键帧。")
+    times_sec_final: list[float] = list(times_sec)
 
     result: dict[str, Path] = {}
     frames_dir = output_dir / "frames_scenedetect"
@@ -149,6 +174,29 @@ def run_extract_scenedetect(
         )
         if not paths:
             raise RuntimeError("场景关键帧抽取失败")
+        # 连续去重：补帧后相邻帧可能同页，按像素差去掉重复
+        kept_indices: list[int]
+        if len(paths) > 1 and scene_duplicate_threshold > 0:
+            kept_indices = [0]
+            for i in range(1, len(paths)):
+                cur = cv2.imread(str(paths[i]))
+                prev = cv2.imread(str(paths[kept_indices[-1]]))
+                if cur is None or prev is None:
+                    kept_indices.append(i)
+                    continue
+                diff = cv2.absdiff(
+                    cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY),
+                    cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY),
+                )
+                if np.mean(diff) >= scene_duplicate_threshold:
+                    kept_indices.append(i)
+            if len(kept_indices) != len(paths):
+                _log(f"连续去重后保留 {len(kept_indices)} 帧。")
+            paths = [paths[j] for j in kept_indices]
+        else:
+            kept_indices = list(range(len(paths)))
+        times_sec_final[:] = [times_sec[j] for j in kept_indices]
+
         out_ppt = output_dir / "slides_ppt_only.pdf"
         evp_utils.frames_to_pdf(paths, out_ppt)
         result["slides_ppt_only"] = out_ppt
@@ -166,7 +214,7 @@ def run_extract_scenedetect(
         full_dir = output_dir / "frames_full"
         full_dir.mkdir(parents=True, exist_ok=True)
         paths_full = evp_utils.extract_frames_at_times(
-            video_full, times_sec, full_dir, progress_callback=_frame_progress
+            video_full, times_sec_final, full_dir, progress_callback=_frame_progress
         )
         if paths_full:
             out_full = output_dir / "slides_full.pdf"
